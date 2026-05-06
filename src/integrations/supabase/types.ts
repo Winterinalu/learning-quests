@@ -14,7 +14,159 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      challenges: {
+        Row: {
+          compartment_code: string | null
+          correct_answer_code: string | null
+          id: string
+          keywords: Json | null
+          level: number
+          options: Json | null
+          question_text: string | null
+          reveal_message: string | null
+          session_id: string
+          story_text: string | null
+          type: string
+        }
+        Insert: {
+          compartment_code?: string | null
+          correct_answer_code?: string | null
+          id?: string
+          keywords?: Json | null
+          level: number
+          options?: Json | null
+          question_text?: string | null
+          reveal_message?: string | null
+          session_id: string
+          story_text?: string | null
+          type: string
+        }
+        Update: {
+          compartment_code?: string | null
+          correct_answer_code?: string | null
+          id?: string
+          keywords?: Json | null
+          level?: number
+          options?: Json | null
+          question_text?: string | null
+          reveal_message?: string | null
+          session_id?: string
+          story_text?: string | null
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "challenges_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      groups: {
+        Row: {
+          created_at: string
+          current_level: number
+          finish_time: string | null
+          group_name: string
+          id: string
+          members: Json
+          session_id: string
+          start_time: string | null
+        }
+        Insert: {
+          created_at?: string
+          current_level?: number
+          finish_time?: string | null
+          group_name: string
+          id?: string
+          members?: Json
+          session_id: string
+          start_time?: string | null
+        }
+        Update: {
+          created_at?: string
+          current_level?: number
+          finish_time?: string | null
+          group_name?: string
+          id?: string
+          members?: Json
+          session_id?: string
+          start_time?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "groups_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sessions: {
+        Row: {
+          allow_late_registration: boolean
+          created_at: string
+          id: string
+          is_active: boolean
+          join_code: string
+          teacher_id: string
+        }
+        Insert: {
+          allow_late_registration?: boolean
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          join_code: string
+          teacher_id: string
+        }
+        Update: {
+          allow_late_registration?: boolean
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          join_code?: string
+          teacher_id?: string
+        }
+        Relationships: []
+      }
+      submissions: {
+        Row: {
+          challenge_level: number
+          group_id: string
+          id: string
+          is_correct: boolean | null
+          submitted_answer: string | null
+          submitted_at: string
+        }
+        Insert: {
+          challenge_level: number
+          group_id: string
+          id?: string
+          is_correct?: boolean | null
+          submitted_answer?: string | null
+          submitted_at?: string
+        }
+        Update: {
+          challenge_level?: number
+          group_id?: string
+          id?: string
+          is_correct?: boolean | null
+          submitted_answer?: string | null
+          submitted_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "submissions_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
