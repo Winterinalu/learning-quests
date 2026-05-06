@@ -5,6 +5,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Index from "./pages/Index.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import Join from "./pages/Join.tsx";
+import Play from "./pages/Play.tsx";
+import Complete from "./pages/Complete.tsx";
+import TeacherLogin from "./pages/TeacherLogin.tsx";
+import TeacherDashboard from "./pages/TeacherDashboard.tsx";
+import TeacherSession from "./pages/TeacherSession.tsx";
 
 const queryClient = new QueryClient();
 
@@ -16,7 +22,13 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+          <Route path="/join/:sessionId" element={<Join />} />
+          <Route path="/play/:groupId" element={<Play />} />
+          <Route path="/play/:groupId/scan" element={<Play />} />
+          <Route path="/complete/:groupId" element={<Complete />} />
+          <Route path="/teacher/login" element={<TeacherLogin />} />
+          <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
+          <Route path="/teacher/session/:sessionId" element={<TeacherSession />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
