@@ -104,8 +104,7 @@ export default function Index() {
         <div className="app-card space-y-2 text-center">
           <h2 className="text-lg font-bold text-primary">Welcome, Investigators!</h2>
           <p className="text-sm text-muted-foreground">
-            Solve the mystery of <strong>Room 407</strong> by working through five physical
-            compartments — read, decode, and unlock!
+            Solve the mystery of the <strong>Room</strong> by exploring compartments — read, decode, and unlock!
           </p>
         </div>
 
