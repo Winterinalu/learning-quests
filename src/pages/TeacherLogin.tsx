@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { AppHeader } from "@/components/AppHeader";
 import { toast } from "sonner";
-import { Eye, EyeOff, Check, X } from "lucide-react";
+import { Eye, EyeOff, Check, X, ArrowLeft } from "lucide-react";
 
 const passwordRules = [
   { label: "At least 8 characters",          test: (p: string) => p.length >= 8 },
@@ -139,6 +139,19 @@ export default function TeacherLogin() {
           </button>
           <button type="button" onClick={switchMode} className="text-sm text-action font-semibold w-full">
             {mode === "signin" ? "Need an account? Sign up" : "Have an account? Sign in"}
+          </button>
+
+          <div className="flex items-center gap-3 pt-1">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted-foreground">or</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+          <button
+            type="button"
+            onClick={() => nav("/")}
+            className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground hover:text-primary w-full"
+          >
+            <ArrowLeft size={14} /> I'm a Student
           </button>
         </form>
       </div>
