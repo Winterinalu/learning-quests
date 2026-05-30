@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import { DEFAULT_CHALLENGES, DEFAULT_STORY, genJoinCode } from "@/lib/gameDefaults";
-import { Plus, LogOut, ExternalLink, Trophy, QrCode, X } from "lucide-react";
+import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function TeacherDashboard() {
@@ -14,6 +14,9 @@ export default function TeacherDashboard() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
   const [qrSession, setQrSession] = useState<any>(null); // session whose QR popover is open
+  const [deleteTarget, setDeleteTarget] = useState<any>(null); // session pending deletion
+  const [deleteInput, setDeleteInput] = useState(""); // typed confirmation text
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) nav("/teacher/login");
@@ -60,6 +63,40 @@ export default function TeacherDashboard() {
   async function toggleLate(s: any) {
     await supabase.from("sessions").update({ allow_late_registration: !s.allow_late_registration }).eq("id", s.id);
     load();
+  }
+
+  function openDeleteDialog(s: any) {
+    setDeleteTarget(s);
+    setDeleteInput("");
+  }
+
+  function closeDeleteDialog() {
+    setDeleteTarget(null);
+    setDeleteInput("");
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const expected = `delete-${deleteTarget.join_code}`;
+    if (deleteInput.trim() !== expected) {
+      toast.error(`Type exactly: ${expected}`);
+      return;
+    }
+    setDeleting(true);
+    try {
+      // Delete related data first (challenges, groups), then the session
+      await supabase.from("challenges").delete().eq("session_id", deleteTarget.id);
+      await supabase.from("groups").delete().eq("session_id", deleteTarget.id);
+      const { error } = await supabase.from("sessions").delete().eq("id", deleteTarget.id);
+      if (error) throw error;
+      toast.success(`Session ${deleteTarget.join_code} deleted.`);
+      closeDeleteDialog();
+      load();
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to delete session.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function logout() {
@@ -113,6 +150,13 @@ export default function TeacherDashboard() {
                     className="flex items-center gap-1.5 rounded-xl border-2 border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition"
                   >
                     <QrCode className="w-4 h-4" /> QR
+                  </button>
+                  <button
+                    onClick={() => openDeleteDialog(s)}
+                    className="flex items-center gap-1.5 rounded-xl border-2 border-destructive/40 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/10 transition"
+                    title="Delete session"
+                  >
+                    <Trash2 className="w-4 h-4" />
                   </button>
                   <Link
                     to={`/teacher/session/${s.id}`}
@@ -227,6 +271,65 @@ export default function TeacherDashboard() {
           );
         })}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) closeDeleteDialog(); }}
+        >
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-pop-in">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 text-destructive">
+                <Trash2 className="w-5 h-5 flex-shrink-0" />
+                <h2 className="text-lg font-bold">Delete Session</h2>
+              </div>
+              <button onClick={closeDeleteDialog} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              This will permanently delete session{" "}
+              <span className="font-bold text-primary">{deleteTarget.join_code}</span> and all
+              associated groups and challenges. This action cannot be undone.
+            </p>
+
+            <div className="bg-muted/50 rounded-xl px-3 py-2 text-xs text-muted-foreground">
+              To confirm, type:{" "}
+              <span className="font-mono font-bold text-destructive select-all">
+                delete-{deleteTarget.join_code}
+              </span>
+            </div>
+
+            <input
+              type="text"
+              value={deleteInput}
+              onChange={(e) => setDeleteInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") confirmDelete(); }}
+              placeholder={`delete-${deleteTarget.join_code}`}
+              className="w-full rounded-xl border-2 border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:border-destructive transition"
+              autoFocus
+            />
+
+            <div className="flex gap-2">
+              <button
+                onClick={closeDeleteDialog}
+                className="flex-1 rounded-xl border-2 border-border py-2 text-sm font-semibold text-muted-foreground hover:bg-muted/50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting || deleteInput.trim() !== `delete-${deleteTarget.join_code}`}
+                className="flex-1 rounded-xl bg-destructive py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleting ? "Deleting…" : "Delete Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
