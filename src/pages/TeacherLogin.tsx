@@ -39,7 +39,7 @@ export default function TeacherLogin() {
         options: { emailRedirectTo: `${window.location.origin}/teacher/dashboard` },
       });
       if (error) toast.error(error.message);
-      else { toast.success("Account created!"); nav("/teacher/dashboard"); }
+      else { toast.success("Account created! Check your email for confirmation."); nav("/teacher/dashboard"); }
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) toast.error(error.message);
@@ -58,7 +58,7 @@ export default function TeacherLogin() {
 
   return (
     <div className="app-shell">
-      <AppHeader subtitle="Teacher Portal" />
+      <AppHeader/>
       <div className="px-4">
         <form onSubmit={submit} className="app-card space-y-3">
           <h2 className="text-lg font-bold text-primary">
