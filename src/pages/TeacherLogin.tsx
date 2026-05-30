@@ -58,7 +58,7 @@ export default function TeacherLogin() {
 
   return (
     <div className="app-shell">
-      <AppHeader subtitle="Teacher Portal" />
+      <AppHeader/>
       <div className="px-4">
         <form onSubmit={submit} className="app-card space-y-3">
           <h2 className="text-lg font-bold text-primary">
