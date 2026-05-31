@@ -7,8 +7,8 @@ import { QRScanner } from "@/components/QRScanner";
 import { BookOpen, Key, ScanLine, CheckCircle2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 
-const COOLDOWN_SEC = 30;
-const MAX_ATTEMPTS = 5;
+const STRIKES_PER_TIER = 3;       // wrong answers before a cooldown triggers
+const COOLDOWN_TIERS_SEC = [5, 10, 15, 20]; // increments, capped at last value
 
 export default function Play() {
   const { groupId } = useParams();
@@ -23,7 +23,8 @@ export default function Play() {
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [attempts, setAttempts] = useState(0);
+  const [strikes, setStrikes] = useState(0);          // wrong answers in current tier
+  const [cooldownTier, setCooldownTier] = useState(0); // how many cooldowns have fired
   const [cooldownUntil, setCooldownUntil] = useState<number>(0);
   const [now, setNow] = useState(Date.now());
 
@@ -65,7 +66,9 @@ export default function Play() {
     setAnswer("");
     setChosenOption("");
     setSuccess(false);
-    setAttempts(0);
+    setStrikes(0);
+    setCooldownTier(0);
+    setCooldownUntil(0);
   }, [currentLevel]);
 
   if (!group) {
@@ -127,14 +130,19 @@ export default function Play() {
       setSuccess(true);
       toast.success("Correct!");
     } else {
-      const next = attempts + 1;
-      setAttempts(next);
-      if (next >= MAX_ATTEMPTS) {
-        setCooldownUntil(Date.now() + COOLDOWN_SEC * 1000);
-        toast.error(`Too many attempts. Wait ${COOLDOWN_SEC}s.`);
-        setAttempts(0);
+      const nextStrikes = strikes + 1;
+      if (nextStrikes >= STRIKES_PER_TIER) {
+        // Trigger cooldown — tier increments up to the last defined value
+        const tierIndex = Math.min(cooldownTier, COOLDOWN_TIERS_SEC.length - 1);
+        const secs = COOLDOWN_TIERS_SEC[tierIndex];
+        setCooldownUntil(Date.now() + secs * 1000);
+        setCooldownTier((t) => t + 1);
+        setStrikes(0);
+        toast.error(`Too many wrong answers! Wait ${secs}s before trying again.`);
       } else {
-        toast.error(`Wrong answer (${next}/${MAX_ATTEMPTS})`);
+        setStrikes(nextStrikes);
+        const remaining = STRIKES_PER_TIER - nextStrikes;
+        toast.error(`Wrong answer — ${remaining} attempt${remaining !== 1 ? "s" : ""} left before cooldown.`);
       }
     }
     setBusy(false);
@@ -143,9 +151,11 @@ export default function Play() {
   async function advanceLevel() {
     const nextLevel = currentLevel + 1;
     if (nextLevel > 5) {
-      await supabase.from("groups").update({
-        current_level: 5, finish_time: new Date().toISOString(),
-      }).eq("id", groupId!);
+      // Ensure start_time exists before recording finish
+      const finishTime = new Date().toISOString();
+      const updates: any = { current_level: 5, finish_time: finishTime };
+      if (!group.start_time) updates.start_time = finishTime;
+      await supabase.from("groups").update(updates).eq("id", groupId!);
       nav(`/complete/${groupId}`);
       return;
     }
@@ -242,8 +252,35 @@ export default function Play() {
                 />
               )}
 
-              <button onClick={submit} disabled={busy || onCooldown} className="btn-primary">
-                {onCooldown ? `Cooldown ${cooldownLeft}s` : busy ? "Checking..." : "Submit Answer"}
+              {/* Strike indicators */}
+              {strikes > 0 && !onCooldown && (
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1">
+                    {Array.from({ length: STRIKES_PER_TIER }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`h-2 flex-1 rounded-full transition-all ${
+                          i < strikes ? "bg-destructive" : "bg-muted"
+                        }`}
+                        style={{ width: 28 }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-xs text-destructive font-semibold">
+                    {STRIKES_PER_TIER - strikes} attempt{STRIKES_PER_TIER - strikes !== 1 ? "s" : ""} before cooldown
+                  </span>
+                </div>
+              )}
+
+              <button
+                onClick={submit}
+                disabled={busy || onCooldown}
+                className={`btn-primary ${onCooldown ? "opacity-60" : ""}`}
+              >
+                {onCooldown
+                  ? `⏳ Cooldown — ${cooldownLeft}s`
+                  : busy ? "Checking..."
+                  : "Submit Answer"}
               </button>
             </>
           )}

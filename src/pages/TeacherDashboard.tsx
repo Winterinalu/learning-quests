@@ -1,12 +1,215 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import { DEFAULT_CHALLENGES, DEFAULT_STORY, genJoinCode } from "@/lib/gameDefaults";
-import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2 } from "lucide-react";
+import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, StopCircle, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { toast } from "sonner";
+
+// ── FLIP-animated leaderboard row ───────────────────────────────────────────
+// Tracks its own DOM position and plays a smooth slide when the list reorders.
+
+const RANK_META: Record<number, { medal: string; border: string; bg: string; text: string; badge: string; glow: string }> = {
+  1: {
+    medal: "🥇",
+    border: "border-yellow-400",
+    bg: "bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/10",
+    text: "text-yellow-700 dark:text-yellow-400",
+    badge: "bg-yellow-400/25 text-yellow-700 dark:text-yellow-400",
+    glow: "shadow-[0_0_12px_2px_rgba(250,204,21,0.35)]",
+  },
+  2: {
+    medal: "🥈",
+    border: "border-slate-400",
+    bg: "bg-gradient-to-r from-slate-50 to-gray-50 dark:from-slate-800/40 dark:to-gray-800/20",
+    text: "text-slate-600 dark:text-slate-300",
+    badge: "bg-slate-400/20 text-slate-600 dark:text-slate-300",
+    glow: "shadow-[0_0_10px_2px_rgba(148,163,184,0.30)]",
+  },
+  3: {
+    medal: "🥉",
+    border: "border-amber-600",
+    bg: "bg-gradient-to-r from-orange-50 to-amber-50 dark:from-amber-900/20 dark:to-orange-900/10",
+    text: "text-amber-700 dark:text-amber-500",
+    badge: "bg-amber-500/20 text-amber-700 dark:text-amber-500",
+    glow: "shadow-[0_0_10px_2px_rgba(217,119,6,0.30)]",
+  },
+};
+
+interface AnimatedRowProps {
+  groupId: string;
+  rank: number | null;
+  isFinished: boolean;
+  groupName: string;
+  elapsed: number;
+  currentLevel: number;
+  pct: number;
+  membersExpanded: boolean;
+  memberList: string[];
+  onToggleExpand: () => void;
+}
+
+function AnimatedRow({
+  groupId, rank, isFinished, groupName, elapsed,
+  currentLevel, pct, membersExpanded, memberList, onToggleExpand,
+}: AnimatedRowProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const prevTop = useRef<number | null>(null);
+  const prevRank = useRef<number | null>(null);
+  const [justTookLead, setJustTookLead] = useState(false);
+
+  // Capture position BEFORE React commits the new layout (first-read of FLIP)
+  useLayoutEffect(() => {
+    if (ref.current) {
+      prevTop.current = ref.current.getBoundingClientRect().top;
+    }
+  });
+
+  // After commit: if position changed, animate from old → new (FLIP invert+play)
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || prevTop.current === null) return;
+    const newTop = el.getBoundingClientRect().top;
+    const delta = prevTop.current - newTop;
+    if (Math.abs(delta) < 2) return; // no meaningful movement
+
+    // Detect rank takeover (moved up)
+    if (delta > 0) {
+      setJustTookLead(true);
+      setTimeout(() => setJustTookLead(false), 1200);
+    }
+
+    el.style.transform = `translateY(${delta}px)`;
+    el.style.transition = "none";
+    requestAnimationFrame(() => {
+      el.style.transform = "";
+      el.style.transition = "transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)";
+    });
+  });
+
+  // Detect when a group newly becomes rank 1
+  useEffect(() => {
+    if (rank === 1 && prevRank.current !== null && prevRank.current !== 1) {
+      setJustTookLead(true);
+      setTimeout(() => setJustTookLead(false), 1500);
+    }
+    prevRank.current = rank;
+  }, [rank]);
+
+  const meta = rank !== null && rank <= 3 ? RANK_META[rank] : null;
+  const m = Math.floor(elapsed / 60);
+  const sec = elapsed % 60;
+
+  return (
+    <div ref={ref} style={{ willChange: "transform" }}>
+      <div
+        className={`rounded-xl border-2 overflow-hidden transition-all duration-500 ${
+          justTookLead ? "scale-[1.015]" : "scale-100"
+        } ${
+          meta
+            ? `${meta.border} ${meta.bg} ${meta.glow}`
+            : isFinished
+            ? "border-success bg-success/5"
+            : "border-border bg-background/40"
+        }`}
+      >
+        {/* Gold/Silver/Bronze header stripe */}
+        {meta && (
+          <div className={`h-1 w-full ${
+            rank === 1 ? "bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-300" :
+            rank === 2 ? "bg-gradient-to-r from-slate-300 via-slate-400 to-gray-300" :
+            "bg-gradient-to-r from-amber-500 via-orange-400 to-amber-600"
+          }`} />
+        )}
+
+        <div className="p-3 space-y-2">
+          <div className="flex items-center justify-between text-sm gap-2">
+            <span className="font-semibold flex items-center gap-1.5 truncate">
+
+              {/* Rank badge */}
+              {rank !== null ? (
+                <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-base font-bold transition-all duration-500 ${
+                  meta ? meta.badge : "bg-muted text-muted-foreground text-xs"
+                } ${justTookLead ? "animate-bounce" : ""}`}>
+                  {meta ? meta.medal : rank}
+                </span>
+              ) : (
+                <span className="shrink-0 w-7 h-7 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground">
+                  —
+                </span>
+              )}
+
+              {/* Group name */}
+              <span className={`truncate ${meta ? meta.text + " font-bold" : ""}`}>
+                {groupName}
+              </span>
+
+              {/* Finished pill */}
+              {isFinished && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold text-success uppercase tracking-wide">
+                  <Trophy className="w-3 h-3" /> Done
+                </span>
+              )}
+
+              {/* "Just took the lead!" flash */}
+              {justTookLead && rank === 1 && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-yellow-400/20 px-2 py-0.5 text-[10px] font-bold text-yellow-600 uppercase tracking-wide animate-pulse">
+                  👑 Lead!
+                </span>
+              )}
+            </span>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-xs tabular-nums ${meta ? meta.text : "text-muted-foreground"}`}>
+                {isFinished ? `✓ ${m}m ${sec}s` : `L${currentLevel}/5 · ${m}m ${sec}s`}
+              </span>
+              {memberList.length > 0 && (
+                <button
+                  onClick={onToggleExpand}
+                  className="flex items-center gap-1 text-[10px] font-semibold text-action"
+                >
+                  <Users className="w-3 h-3" />
+                  {memberList.length}
+                  {membersExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="h-2 bg-muted/60 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-700 ${
+                isFinished
+                  ? "bg-success"
+                  : rank === 1 ? "bg-gradient-to-r from-yellow-400 to-amber-400"
+                  : rank === 2 ? "bg-gradient-to-r from-slate-400 to-slate-500"
+                  : rank === 3 ? "bg-gradient-to-r from-amber-500 to-orange-500"
+                  : "bg-action"
+              }`}
+              style={{ width: `${Math.min(100, pct)}%` }}
+            />
+          </div>
+        </div>
+
+        {membersExpanded && memberList.length > 0 && (
+          <div className="border-t border-border bg-muted/30 px-3 py-2.5 space-y-1">
+            {memberList.map((name, i) => (
+              <div key={i} className="flex items-center gap-2.5 text-[11px]">
+                <span className="shrink-0 w-4 h-4 rounded-full bg-muted border border-border flex items-center justify-center text-[9px] font-bold text-muted-foreground tabular-nums">
+                  {i + 1}
+                </span>
+                <span className="text-foreground/80 font-medium">{name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function TeacherDashboard() {
   const { user, loading } = useAuth();
@@ -17,6 +220,10 @@ export default function TeacherDashboard() {
   const [deleteTarget, setDeleteTarget] = useState<any>(null); // session pending deletion
   const [deleteInput, setDeleteInput] = useState(""); // typed confirmation text
   const [deleting, setDeleting] = useState(false);
+  const [startingSession, setStartingSession] = useState<string | null>(null); // sessionId being started
+  const [endTarget, setEndTarget] = useState<any>(null); // session pending end
+  const [ending, setEnding] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // groupIds with expanded members
 
   useEffect(() => {
     if (!loading && !user) nav("/teacher/login");
@@ -61,7 +268,7 @@ export default function TeacherDashboard() {
   }
 
   async function toggleLate(s: any) {
-    await supabase.from("sessions").update({ allow_late_registration: !s.allow_late_registration }).eq("id", s.id);
+    await supabase.from("sessions").update({ allow_late_registration: !(s.allow_late_registration ?? false) }).eq("id", s.id);
     load();
   }
 
@@ -97,6 +304,41 @@ export default function TeacherDashboard() {
     } finally {
       setDeleting(false);
     }
+  }
+
+  async function startSession(sessionId: string) {
+    setStartingSession(sessionId);
+    const { error } = await supabase
+      .from("sessions")
+      .update({ started_at: new Date().toISOString() })
+      .eq("id", sessionId);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Session started! All groups are now live.");
+      load();
+    }
+    setStartingSession(null);
+  }
+
+  async function endSession(s: any) {
+    setEnding(true);
+    const { error } = await supabase
+      .from("sessions")
+      .update({ ended_at: new Date().toISOString() })
+      .eq("id", s.id);
+    setEnding(false);
+    if (error) { toast.error(error.message); return; }
+    setEndTarget(null);
+    toast.success(`Session ${s.join_code} ended.`);
+    load();
+  }
+
+  function toggleGroupExpand(groupId: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      next.has(groupId) ? next.delete(groupId) : next.add(groupId);
+      return next;
+    });
   }
 
   async function logout() {
@@ -206,7 +448,7 @@ export default function TeacherDashboard() {
                 <span className="font-medium">Allow late registration</span>
                 <input
                   type="checkbox"
-                  checked={s.allow_late_registration}
+                  checked={s.allow_late_registration ?? false}
                   onChange={() => toggleLate(s)}
                   className="w-5 h-5 accent-[hsl(var(--action))]"
                 />
@@ -214,63 +456,145 @@ export default function TeacherDashboard() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-semibold text-primary">Live Leaderboard</span>
+                  <span className="font-semibold text-primary flex items-center gap-2">
+                    Live Leaderboard
+                    {s.started_at && (
+                      <span className="flex items-center gap-1 text-[10px] font-semibold text-success uppercase tracking-wide">
+                        <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                        Live
+                      </span>
+                    )}
+                  </span>
                   <span className="text-xs text-muted-foreground">
                     {sGroups.length} groups · {completed} done
                   </span>
                 </div>
+
+                {/* Start Session button */}
+                {!(s.started_at ?? null) ? (
+                  <button
+                    onClick={() => startSession(s.id)}
+                    disabled={startingSession === s.id || sGroups.length === 0}
+                    className="w-full btn-primary flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-50"
+                  >
+                    <PlayCircle className="w-4 h-4" />
+                    {startingSession === s.id
+                      ? "Starting..."
+                      : sGroups.length === 0
+                      ? "Waiting for groups to register..."
+                      : `Start Session · ${sGroups.length} group${sGroups.length !== 1 ? "s" : ""} ready`}
+                  </button>
+                ) : !s.ended_at ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-success/10 border border-success/30 py-2.5 text-sm font-semibold text-success">
+                      <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+                      Session Live
+                    </div>
+                    <button
+                      onClick={() => setEndTarget(s)}
+                      className="flex items-center gap-1.5 rounded-xl border-2 border-destructive/40 px-3 py-2.5 text-xs font-semibold text-destructive hover:bg-destructive/10 transition"
+                      title="End session"
+                    >
+                      <StopCircle className="w-4 h-4" /> End
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 rounded-xl bg-muted border border-border py-2.5 text-sm font-semibold text-muted-foreground">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground" />
+                    Session Ended
+                  </div>
+                )}
+
                 {sGroups.length === 0 && (
                   <p className="text-xs text-muted-foreground">Waiting for groups to register...</p>
                 )}
-                {sGroups
-                  .sort(
-                    (a, b) =>
-                      b.current_level - a.current_level ||
-                      (a.created_at < b.created_at ? -1 : 1)
-                  )
-                  .map((g) => {
-                    const pct = ((g.current_level - 1) / 5) * 100 + (g.finish_time ? 20 : 0);
+                {(() => {
+                  // Rank finished groups by elapsed time, then append in-progress groups
+                  const finishedGroups = sGroups
+                    .filter((g) => g.finish_time && g.start_time)
+                    .map((g) => ({
+                      ...g,
+                      elapsed_ms: new Date(g.finish_time).getTime() - new Date(g.start_time).getTime(),
+                    }))
+                    .sort((a, b) => a.elapsed_ms - b.elapsed_ms);
+                  const inProgressGroups = sGroups
+                    .filter((g) => !g.finish_time)
+                    .sort((a, b) => b.current_level - a.current_level || (a.created_at < b.created_at ? -1 : 1));
+                  const sorted = [...finishedGroups, ...inProgressGroups];
+
+                  return sorted.map((g, idx) => {
+                    const isFinished = !!g.finish_time;
+                    const rank = isFinished ? idx + 1 : null;
                     const elapsed = g.start_time
                       ? Math.round(
-                          ((g.finish_time ? +new Date(g.finish_time) : Date.now()) -
-                            +new Date(g.start_time)) /
-                            1000
+                          ((g.finish_time ? +new Date(g.finish_time) : Date.now()) - +new Date(g.start_time)) / 1000
                         )
                       : 0;
+                    const pct = isFinished ? 100 : ((g.current_level - 1) / 5) * 100;
+                    const membersExpanded = expandedGroups.has(g.id);
+                    const memberList: string[] = g.members || [];
                     return (
-                      <div
+                      <AnimatedRow
                         key={g.id}
-                        className={`rounded-xl p-3 border ${
-                          g.finish_time
-                            ? "border-success bg-success/5"
-                            : "border-border bg-background/40"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-semibold">
-                            {g.group_name}{" "}
-                            {g.finish_time && (
-                              <Trophy className="inline w-4 h-4 text-success ml-1" />
-                            )}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            L{g.current_level}/5 · {Math.floor(elapsed / 60)}m {elapsed % 60}s
-                          </span>
-                        </div>
-                        <div className="h-2 bg-muted rounded-full mt-2 overflow-hidden">
-                          <div
-                            className="h-full bg-action transition-all"
-                            style={{ width: `${Math.min(100, pct)}%` }}
-                          />
-                        </div>
-                      </div>
+                        groupId={g.id}
+                        rank={rank}
+                        isFinished={isFinished}
+                        groupName={g.group_name}
+                        elapsed={elapsed}
+                        currentLevel={g.current_level}
+                        pct={pct}
+                        membersExpanded={membersExpanded}
+                        memberList={memberList}
+                        onToggleExpand={() => toggleGroupExpand(g.id)}
+                      />
                     );
-                  })}
+                  });
+                })()}
               </div>
             </div>
           );
         })}
       </div>
+
+      {/* End Session Confirmation Modal */}
+      {endTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setEndTarget(null); }}
+        >
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-pop-in">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 text-destructive">
+                <StopCircle className="w-5 h-5 flex-shrink-0" />
+                <h2 className="text-lg font-bold">End Session</h2>
+              </div>
+              <button onClick={() => setEndTarget(null)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              This will end session{" "}
+              <span className="font-bold text-primary">{endTarget.join_code}</span>. Groups
+              already in progress will no longer be able to submit answers. This cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEndTarget(null)}
+                className="flex-1 rounded-xl border-2 border-border py-2 text-sm font-semibold text-muted-foreground hover:bg-muted/50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => endSession(endTarget)}
+                disabled={ending}
+                className="flex-1 rounded-xl bg-destructive py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-40"
+              >
+                {ending ? "Ending…" : "End Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteTarget && (
