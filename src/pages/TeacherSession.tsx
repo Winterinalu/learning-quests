@@ -197,7 +197,7 @@ export default function TeacherSession() {
               const canvasId = `unlock-qr-${n}`;
               return (
                 <div key={n} className="bg-background rounded-xl p-3 text-center space-y-1.5 border border-border">
-                  <div className="text-xs font-semibold text-primary">After Compartment {n}</div>
+                  <div className="text-xs font-semibold text-primary">Compartment {n}</div>
                   <div className="bg-white p-1.5 rounded-lg inline-block">
                     <QRCodeCanvas id={canvasId} value={`?from=${n}`} size={88} includeMargin />
                   </div>
@@ -339,7 +339,7 @@ export default function TeacherSession() {
           {/* Compartment Unlock QRs */}
           {[1, 2, 3, 4].map((n) => (
             <div key={n} className="print-qr-item">
-              <div className="print-label">After Compartment {n}</div>
+              <div className="print-label">Compartment {n}</div>
               <div className="print-sublabel">Place inside compartment {n}</div>
               <QRCodeCanvas
                 id={`print-unlock-qr-${n}`}
