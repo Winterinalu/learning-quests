@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import { DEFAULT_CHALLENGES, DEFAULT_STORY, genJoinCode } from "@/lib/gameDefaults";
-import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2 } from "lucide-react";
+import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { toast } from "sonner";
 
 export default function TeacherDashboard() {
@@ -17,6 +17,8 @@ export default function TeacherDashboard() {
   const [deleteTarget, setDeleteTarget] = useState<any>(null); // session pending deletion
   const [deleteInput, setDeleteInput] = useState(""); // typed confirmation text
   const [deleting, setDeleting] = useState(false);
+  const [startingSession, setStartingSession] = useState<string | null>(null); // sessionId being started
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // groupIds with expanded members
 
   useEffect(() => {
     if (!loading && !user) nav("/teacher/login");
@@ -61,7 +63,7 @@ export default function TeacherDashboard() {
   }
 
   async function toggleLate(s: any) {
-    await supabase.from("sessions").update({ allow_late_registration: !s.allow_late_registration }).eq("id", s.id);
+    await supabase.from("sessions").update({ allow_late_registration: !(s.allow_late_registration ?? false) }).eq("id", s.id);
     load();
   }
 
@@ -97,6 +99,28 @@ export default function TeacherDashboard() {
     } finally {
       setDeleting(false);
     }
+  }
+
+  async function startSession(sessionId: string) {
+    setStartingSession(sessionId);
+    const { error } = await supabase
+      .from("sessions")
+      .update({ started_at: new Date().toISOString() })
+      .eq("id", sessionId);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Session started! All groups are now live.");
+      load();
+    }
+    setStartingSession(null);
+  }
+
+  function toggleGroupExpand(groupId: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      next.has(groupId) ? next.delete(groupId) : next.add(groupId);
+      return next;
+    });
   }
 
   async function logout() {
@@ -206,7 +230,7 @@ export default function TeacherDashboard() {
                 <span className="font-medium">Allow late registration</span>
                 <input
                   type="checkbox"
-                  checked={s.allow_late_registration}
+                  checked={s.allow_late_registration ?? false}
                   onChange={() => toggleLate(s)}
                   className="w-5 h-5 accent-[hsl(var(--action))]"
                 />
@@ -219,6 +243,28 @@ export default function TeacherDashboard() {
                     {sGroups.length} groups · {completed} done
                   </span>
                 </div>
+
+                {/* Start Session button */}
+                {!(s.started_at ?? null) ? (
+                  <button
+                    onClick={() => startSession(s.id)}
+                    disabled={startingSession === s.id || sGroups.length === 0}
+                    className="w-full btn-primary flex items-center justify-center gap-2 py-3 text-sm disabled:opacity-50"
+                  >
+                    <PlayCircle className="w-4 h-4" />
+                    {startingSession === s.id
+                      ? "Starting..."
+                      : sGroups.length === 0
+                      ? "Waiting for groups to register..."
+                      : `Start Session · ${sGroups.length} group${sGroups.length !== 1 ? "s" : ""} ready`}
+                  </button>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 rounded-xl bg-success/10 border border-success/30 py-2.5 text-sm font-semibold text-success">
+                    <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+                    Session Live
+                  </div>
+                )}
+
                 {sGroups.length === 0 && (
                   <p className="text-xs text-muted-foreground">Waiting for groups to register...</p>
                 )}
@@ -237,32 +283,62 @@ export default function TeacherDashboard() {
                             1000
                         )
                       : 0;
+                    const membersExpanded = expandedGroups.has(g.id);
+                    const memberList: string[] = g.members || [];
                     return (
                       <div
                         key={g.id}
-                        className={`rounded-xl p-3 border ${
+                        className={`rounded-xl border overflow-hidden ${
                           g.finish_time
                             ? "border-success bg-success/5"
                             : "border-border bg-background/40"
                         }`}
                       >
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-semibold">
-                            {g.group_name}{" "}
-                            {g.finish_time && (
-                              <Trophy className="inline w-4 h-4 text-success ml-1" />
-                            )}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            L{g.current_level}/5 · {Math.floor(elapsed / 60)}m {elapsed % 60}s
-                          </span>
+                        <div className="p-3 space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="font-semibold flex items-center gap-1.5">
+                              {g.group_name}
+                              {g.finish_time && (
+                                <Trophy className="w-4 h-4 text-success" />
+                              )}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">
+                                L{g.current_level}/5 · {Math.floor(elapsed / 60)}m {elapsed % 60}s
+                              </span>
+                              {memberList.length > 0 && (
+                                <button
+                                  onClick={() => toggleGroupExpand(g.id)}
+                                  className="flex items-center gap-1 text-[10px] font-semibold text-action"
+                                >
+                                  <Users className="w-3 h-3" />
+                                  {memberList.length}
+                                  {membersExpanded
+                                    ? <ChevronUp className="w-3 h-3" />
+                                    : <ChevronDown className="w-3 h-3" />}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-action transition-all"
+                              style={{ width: `${Math.min(100, pct)}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-2 bg-muted rounded-full mt-2 overflow-hidden">
-                          <div
-                            className="h-full bg-action transition-all"
-                            style={{ width: `${Math.min(100, pct)}%` }}
-                          />
-                        </div>
+                        {membersExpanded && memberList.length > 0 && (
+                          <div className="border-t border-border bg-muted/30 px-3 py-2 flex flex-wrap gap-1.5">
+                            {memberList.map((name, i) => (
+                              <span
+                                key={i}
+                                className="text-[11px] bg-background border border-border rounded-full px-2.5 py-0.5 text-foreground/80 font-medium"
+                              >
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
