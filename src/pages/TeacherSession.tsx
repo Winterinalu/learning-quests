@@ -56,6 +56,15 @@ function injectPrintStyles() {
   document.head.appendChild(style);
 }
 
+// Subtle fade-in for page transitions (no bounce)
+const FADE_STYLE = `
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in { animation: fade-in 0.18s ease-out both; }
+`;
+
 // Default challenge template for new compartments
 function defaultChallenge(sessionId: string, level: number) {
   return {
@@ -133,6 +142,18 @@ export default function TeacherSession() {
     }
   }
 
+  // If a non-last compartment has type "final_riddle", reset it to "sequence"
+  useEffect(() => {
+    if (challenges.length < 2) return;
+    const nonLast = challenges.slice(0, -1);
+    nonLast.forEach((c) => {
+      if (c.type === "final_riddle") {
+        updateChallenge(c.id, { type: "sequence" });
+        toast.info(`Compartment ${c.level} type reset to Sequence — Final Riddle is only allowed on the last compartment.`);
+      }
+    });
+  }, [challenges.length]);
+
   async function addCompartment() {
     if (!sessionId) return;
     setAddingCompartment(true);
@@ -140,7 +161,14 @@ export default function TeacherSession() {
     const template = defaultChallenge(sessionId, nextLevel);
     const { data, error } = await supabase.from("challenges").insert(template).select().single();
     setAddingCompartment(false);
-    if (error) { toast.error(error.message); return; }
+    if (error) {
+      if (error.message?.includes("challenges_level_check")) {
+        toast.error("Your database limits the number of compartments. Run this in Supabase SQL Editor to unlock more: ALTER TABLE challenges DROP CONSTRAINT challenges_level_check;");
+      } else {
+        toast.error(error.message);
+      }
+      return;
+    }
     setChallenges((prev) => {
       setActivePage(prev.length); // use up-to-date length, not stale closure
       return [...prev, data];
@@ -178,6 +206,14 @@ export default function TeacherSession() {
   }
 
   if (loading) return <div className="app-shell"><AppHeader /></div>;
+
+  // Inject subtle page-transition keyframe once
+  if (typeof document !== "undefined" && !document.getElementById("fade-in-style")) {
+    const s = document.createElement("style");
+    s.id = "fade-in-style";
+    s.textContent = FADE_STYLE;
+    document.head.appendChild(s);
+  }
   if (!user) return (
     <div className="app-shell">
       <AppHeader />
@@ -364,7 +400,7 @@ export default function TeacherSession() {
 
           {/* Active compartment form — only this part changes */}
           {activeChallenge ? (
-            <div key={activeChallenge.id} className="px-4 pb-4 pt-2 space-y-3 animate-pop-in">
+            <div key={activeChallenge.id} className="px-4 pb-4 pt-2 space-y-3 animate-fade-in">
 
               {/* Compartment label + type selector */}
               <div className="flex items-center justify-between">
@@ -380,7 +416,9 @@ export default function TeacherSession() {
                   <option value="multiple_choice">Multiple Choice</option>
                   <option value="short_answer">Short Answer</option>
                   <option value="long_text">Long Text</option>
-                  <option value="final_riddle">Final Riddle</option>
+                  {activePage === challenges.length - 1 && (
+                    <option value="final_riddle">Final Riddle</option>
+                  )}
                 </select>
               </div>
 
