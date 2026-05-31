@@ -141,8 +141,10 @@ export default function TeacherSession() {
     const { data, error } = await supabase.from("challenges").insert(template).select().single();
     setAddingCompartment(false);
     if (error) { toast.error(error.message); return; }
-    setChallenges((prev) => [...prev, data]);
-    setActivePage(challenges.length); // jump to new page
+    setChallenges((prev) => {
+      setActivePage(prev.length); // use up-to-date length, not stale closure
+      return [...prev, data];
+    });
     toast.success(`Compartment ${nextLevel} added`);
   }
 
@@ -152,14 +154,15 @@ export default function TeacherSession() {
     if (!confirmed) return;
     setRemovingCompartment(true);
     const { error } = await supabase.from("challenges").delete().eq("id", c.id);
-    setRemovingCompartment(false);
-    if (error) { toast.error(error.message); return; }
-    // Re-number remaining challenges in DB
+    if (error) { setRemovingCompartment(false); toast.error(error.message); return; }
+    // Re-number sequentially one-by-one to avoid transient unique constraint violations.
+    // Parallel updates can collide when two rows temporarily share the same level number.
     const remaining = challenges.filter((x) => x.id !== c.id);
     const renumbered = remaining.map((x, i) => ({ ...x, level: i + 1 }));
-    await Promise.all(
-      renumbered.map((x) => supabase.from("challenges").update({ level: x.level }).eq("id", x.id))
-    );
+    for (const x of renumbered) {
+      await supabase.from("challenges").update({ level: x.level }).eq("id", x.id);
+    }
+    setRemovingCompartment(false);
     setChallenges(renumbered);
     setDirtyPages((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
     toast.success(`Compartment ${c.level} removed`);
