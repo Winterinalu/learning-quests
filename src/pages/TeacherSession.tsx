@@ -7,6 +7,54 @@ import { AppHeader } from "@/components/AppHeader";
 import { ArrowLeft, Save, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { toast } from "sonner";
 
+// Inject print styles once
+const PRINT_STYLE_ID = "teacher-session-print-styles";
+function injectPrintStyles() {
+  if (document.getElementById(PRINT_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = PRINT_STYLE_ID;
+  style.textContent = `
+    @media print {
+      body > * { display: none !important; }
+      #qr-print-area { display: flex !important; }
+    }
+    #qr-print-area {
+      display: none;
+      flex-wrap: wrap;
+      gap: 32px;
+      padding: 24px;
+      font-family: sans-serif;
+    }
+    #qr-print-area .print-qr-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      width: 180px;
+    }
+    #qr-print-area .print-qr-item .print-label {
+      font-size: 14px;
+      font-weight: 700;
+      text-align: center;
+      color: #111;
+    }
+    #qr-print-area .print-qr-item .print-sublabel {
+      font-size: 11px;
+      color: #555;
+      text-align: center;
+    }
+    #qr-print-area .print-qr-item canvas {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 6px;
+      background: white;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 export default function TeacherSession() {
   const { sessionId } = useParams();
   const { user, loading } = useAuth();
@@ -14,6 +62,10 @@ export default function TeacherSession() {
   const [challenges, setChallenges] = useState<any[]>([]);
   const [joinQrExpanded, setJoinQrExpanded] = useState(true);
   const joinQrRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    injectPrintStyles();
+  }, []);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -126,9 +178,7 @@ export default function TeacherSession() {
                 </button>
               </div>
 
-              <a href={joinUrl} className="text-[11px] text-action break-all underline block text-center">
-                {joinUrl}
-              </a>
+
             </div>
           )}
         </div>
@@ -267,6 +317,37 @@ export default function TeacherSession() {
             </details>
           ))}
         </div>
+      </div>
+
+      {/* ── Hidden QR Print Area — only visible when printing ── */}
+      <div id="qr-print-area">
+        {/* Session Join QR */}
+        <div className="print-qr-item">
+          <div className="print-label">Session Code</div>
+          <div className="print-sublabel">{session.join_code}</div>
+          <QRCodeCanvas
+            id="print-join-qr"
+            value={joinUrl}
+            size={160}
+            includeMargin
+          />
+          <div className="print-sublabel">Scan to join the session</div>
+        </div>
+
+        {/* Compartment Unlock QRs */}
+        {[1, 2, 3, 4].map((n) => (
+          <div key={n} className="print-qr-item">
+            <div className="print-label">After Compartment {n}</div>
+            <div className="print-sublabel">Place inside compartment {n}</div>
+            <QRCodeCanvas
+              id={`print-unlock-qr-${n}`}
+              value={`${window.location.origin}/play/SCAN/scan?from=${n}`}
+              size={160}
+              includeMargin
+            />
+            <div className="print-sublabel">Scan to unlock next level</div>
+          </div>
+        ))}
       </div>
     </div>
   );
