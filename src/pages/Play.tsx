@@ -17,6 +17,7 @@ export default function Play() {
   const nav = useNavigate();
 
   const [group, setGroup] = useState<any>(null);
+  const [sessionStatus, setSessionStatus] = useState<"loading" | "not_started" | "active" | "ended" | "deleted">("loading");
   const [challenges, setChallenges] = useState<any[]>([]);
   const [answer, setAnswer] = useState("");
   const [chosenOption, setChosenOption] = useState<string>("");
@@ -34,19 +35,76 @@ export default function Play() {
     return () => clearInterval(id);
   }, []);
 
-  // Load group + challenges
+  // Load group + challenges + session status
   useEffect(() => {
     if (!groupId) return;
     (async () => {
       const { data: g } = await supabase.from("groups").select("*").eq("id", groupId).maybeSingle();
-      setGroup(g);
-      if (g) {
-        const { data: ch } = await supabase
-          .from("challenges").select("*").eq("session_id", g.session_id).order("level");
-        setChallenges(ch || []);
+
+      // Group row was deleted (session deleted)
+      if (!g) {
+        setSessionStatus("deleted");
+        return;
       }
+
+      setGroup(g);
+
+      // Check the parent session
+      const { data: sess } = await supabase
+        .from("sessions")
+        .select("started_at, ended_at")
+        .eq("id", g.session_id)
+        .maybeSingle();
+
+      if (!sess) {
+        setSessionStatus("deleted");
+        return;
+      }
+
+      if (sess.ended_at) {
+        setSessionStatus("ended");
+        return;
+      }
+
+      if (!sess.started_at) {
+        setSessionStatus("not_started");
+        return;
+      }
+
+      setSessionStatus("active");
+
+      const { data: ch } = await supabase
+        .from("challenges").select("*").eq("session_id", g.session_id).order("level");
+      setChallenges(ch || []);
     })();
   }, [groupId]);
+
+  // Live subscription — watch the session row for ended_at or deletion
+  useEffect(() => {
+    if (!group?.session_id) return;
+    const ch = supabase
+      .channel(`play-session-watch-${group.session_id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "sessions", filter: `id=eq.${group.session_id}` },
+        (payload) => {
+          const updated = payload.new as any;
+          if (updated.ended_at) setSessionStatus("ended");
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "sessions", filter: `id=eq.${group.session_id}` },
+        () => setSessionStatus("deleted")
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "groups", filter: `id=eq.${groupId}` },
+        () => setSessionStatus("deleted")
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [group?.session_id, groupId]);
 
   const currentLevel = group?.current_level ?? 1;
   // Enforce sequential
@@ -71,11 +129,43 @@ export default function Play() {
     setCooldownUntil(0);
   }, [currentLevel]);
 
-  if (!group) {
+  // Session status gate — shown before the main game UI
+  if (sessionStatus !== "active") {
+    const statusContent = {
+      loading: {
+        icon: null,
+        heading: "Loading…",
+        body: "Please wait.",
+      },
+      not_started: {
+        icon: "⏳",
+        heading: "Session not started yet",
+        body: "Your teacher hasn't started the session yet. Hold tight — this page will update automatically once the session goes live.",
+      },
+      ended: {
+        icon: "🏁",
+        heading: "Session has ended",
+        body: "The teacher has closed this session. No further answers can be submitted. Thank you for participating!",
+      },
+      deleted: {
+        icon: "🗑️",
+        heading: "Session no longer exists",
+        body: "This session has been deleted by the teacher. Please ask your teacher for a new join link.",
+      },
+    }[sessionStatus];
+
     return (
       <div className="app-shell">
         <AppHeader />
-        <div className="px-4"><div className="app-card text-center text-muted-foreground">Loading group...</div></div>
+        <div className="px-4">
+          <div className="app-card text-center space-y-3 animate-pop-in">
+            {statusContent.icon && (
+              <div className="text-4xl">{statusContent.icon}</div>
+            )}
+            <h2 className="text-lg font-bold text-primary">{statusContent.heading}</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">{statusContent.body}</p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -111,6 +201,7 @@ export default function Play() {
   }
 
   async function submit() {
+    if (sessionStatus !== "active") return toast.error("The session has ended.");
     if (onCooldown) return;
     const input = challenge.type === "multiple_choice" ? chosenOption : answer;
     if (!input.trim()) return toast.error("Enter an answer first");
@@ -149,6 +240,7 @@ export default function Play() {
   }
 
   async function advanceLevel() {
+    if (sessionStatus !== "active") return toast.error("The session has ended.");
     const nextLevel = currentLevel + 1;
     if (nextLevel > 5) {
       // Ensure start_time exists before recording finish
