@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import { DEFAULT_CHALLENGES, DEFAULT_STORY, genJoinCode } from "@/lib/gameDefaults";
-import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, ChevronDown, ChevronUp, Users } from "lucide-react";
+import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, StopCircle, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { toast } from "sonner";
 
 // ── FLIP-animated leaderboard row ───────────────────────────────────────────
@@ -195,11 +195,14 @@ function AnimatedRow({
         </div>
 
         {membersExpanded && memberList.length > 0 && (
-          <div className="border-t border-border bg-muted/30 px-3 py-2 flex flex-wrap gap-1.5">
+          <div className="border-t border-border bg-muted/30 px-3 py-2.5 space-y-1">
             {memberList.map((name, i) => (
-              <span key={i} className="text-[11px] bg-background border border-border rounded-full px-2.5 py-0.5 text-foreground/80 font-medium">
-                {name}
-              </span>
+              <div key={i} className="flex items-center gap-2.5 text-[11px]">
+                <span className="shrink-0 w-4 h-4 rounded-full bg-muted border border-border flex items-center justify-center text-[9px] font-bold text-muted-foreground tabular-nums">
+                  {i + 1}
+                </span>
+                <span className="text-foreground/80 font-medium">{name}</span>
+              </div>
             ))}
           </div>
         )}
@@ -218,6 +221,8 @@ export default function TeacherDashboard() {
   const [deleteInput, setDeleteInput] = useState(""); // typed confirmation text
   const [deleting, setDeleting] = useState(false);
   const [startingSession, setStartingSession] = useState<string | null>(null); // sessionId being started
+  const [endTarget, setEndTarget] = useState<any>(null); // session pending end
+  const [ending, setEnding] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // groupIds with expanded members
 
   useEffect(() => {
@@ -313,6 +318,19 @@ export default function TeacherDashboard() {
       load();
     }
     setStartingSession(null);
+  }
+
+  async function endSession(s: any) {
+    setEnding(true);
+    const { error } = await supabase
+      .from("sessions")
+      .update({ ended_at: new Date().toISOString() })
+      .eq("id", s.id);
+    setEnding(false);
+    if (error) { toast.error(error.message); return; }
+    setEndTarget(null);
+    toast.success(`Session ${s.join_code} ended.`);
+    load();
   }
 
   function toggleGroupExpand(groupId: string) {
@@ -466,10 +484,24 @@ export default function TeacherDashboard() {
                       ? "Waiting for groups to register..."
                       : `Start Session · ${sGroups.length} group${sGroups.length !== 1 ? "s" : ""} ready`}
                   </button>
+                ) : !s.ended_at ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-success/10 border border-success/30 py-2.5 text-sm font-semibold text-success">
+                      <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+                      Session Live
+                    </div>
+                    <button
+                      onClick={() => setEndTarget(s)}
+                      className="flex items-center gap-1.5 rounded-xl border-2 border-destructive/40 px-3 py-2.5 text-xs font-semibold text-destructive hover:bg-destructive/10 transition"
+                      title="End session"
+                    >
+                      <StopCircle className="w-4 h-4" /> End
+                    </button>
+                  </div>
                 ) : (
-                  <div className="flex items-center justify-center gap-2 rounded-xl bg-success/10 border border-success/30 py-2.5 text-sm font-semibold text-success">
-                    <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-                    Session Live
+                  <div className="flex items-center justify-center gap-2 rounded-xl bg-muted border border-border py-2.5 text-sm font-semibold text-muted-foreground">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground" />
+                    Session Ended
                   </div>
                 )}
 
@@ -523,6 +555,46 @@ export default function TeacherDashboard() {
           );
         })}
       </div>
+
+      {/* End Session Confirmation Modal */}
+      {endTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setEndTarget(null); }}
+        >
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-pop-in">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 text-destructive">
+                <StopCircle className="w-5 h-5 flex-shrink-0" />
+                <h2 className="text-lg font-bold">End Session</h2>
+              </div>
+              <button onClick={() => setEndTarget(null)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              This will end session{" "}
+              <span className="font-bold text-primary">{endTarget.join_code}</span>. Groups
+              already in progress will no longer be able to submit answers. This cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEndTarget(null)}
+                className="flex-1 rounded-xl border-2 border-border py-2 text-sm font-semibold text-muted-foreground hover:bg-muted/50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => endSession(endTarget)}
+                disabled={ending}
+                className="flex-1 rounded-xl bg-destructive py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-40"
+              >
+                {ending ? "Ending…" : "End Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteTarget && (
