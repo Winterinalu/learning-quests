@@ -79,9 +79,51 @@ export default function Play() {
     })();
   }, [groupId]);
 
-  // Live subscription — watch the session row for ended_at or deletion
+  // Live subscription — watch the session row for ended_at or deletion,
+  // AND watch all groups in the session to auto-end when everyone finishes.
   useEffect(() => {
     if (!group?.session_id) return;
+
+    /** Auto-end the session if it's live and every group is finished. */
+    async function checkAllGroupsDone() {
+      const { data: allGroups } = await supabase
+        .from("groups")
+        .select("id, finish_time")
+        .eq("session_id", group.session_id);
+      if (!allGroups || allGroups.length === 0) return;
+      if (!allGroups.every((g) => !!g.finish_time)) return;
+      // All done — mark session ended (guard with .is("ended_at", null))
+      const { error } = await supabase
+        .from("sessions")
+        .update({ ended_at: new Date().toISOString() })
+        .eq("id", group.session_id)
+        .is("ended_at", null);
+      if (!error) setSessionStatus("ended");
+    }
+
+    /** Auto-end the session if started_at is >24 h ago. */
+    async function check24h() {
+      const { data: sess } = await supabase
+        .from("sessions")
+        .select("started_at, ended_at")
+        .eq("id", group.session_id)
+        .maybeSingle();
+      if (!sess || sess.ended_at || !sess.started_at) return;
+      const age = Date.now() - new Date(sess.started_at).getTime();
+      if (age >= 24 * 60 * 60 * 1000) {
+        const { error } = await supabase
+          .from("sessions")
+          .update({ ended_at: new Date().toISOString() })
+          .eq("id", group.session_id)
+          .is("ended_at", null);
+        if (!error) setSessionStatus("ended");
+      }
+    }
+
+    // Run 24-hour check immediately on mount and every 5 minutes
+    check24h();
+    const timer24h = setInterval(check24h, 5 * 60 * 1000);
+
     const ch = supabase
       .channel(`play-session-watch-${group.session_id}`)
       .on(
@@ -102,8 +144,17 @@ export default function Play() {
         { event: "DELETE", schema: "public", table: "groups", filter: `id=eq.${groupId}` },
         () => setSessionStatus("deleted")
       )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "groups", filter: `session_id=eq.${group.session_id}` },
+        () => checkAllGroupsDone()
+      )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+
+    return () => {
+      clearInterval(timer24h);
+      supabase.removeChannel(ch);
+    };
   }, [group?.session_id, groupId]);
 
   const currentLevel = group?.current_level ?? 1;

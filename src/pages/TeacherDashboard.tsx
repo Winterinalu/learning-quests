@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppHeader } from "@/components/AppHeader";
 import { DEFAULT_CHALLENGES, DEFAULT_STORY, genJoinCode } from "@/lib/gameDefaults";
-import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, StopCircle, ChevronDown, ChevronUp, Users } from "lucide-react";
+import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, StopCircle, ChevronDown, ChevronUp, Users, History, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 // ── FLIP-animated leaderboard row ───────────────────────────────────────────
@@ -224,6 +224,9 @@ export default function TeacherDashboard() {
   const [endTarget, setEndTarget] = useState<any>(null); // session pending end
   const [ending, setEnding] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set()); // groupIds with expanded members
+  const [reuseTarget, setReuseTarget] = useState<any>(null); // session to reuse content from
+  const [reusing, setReusing] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) nav("/teacher/login");
@@ -333,6 +336,104 @@ export default function TeacherDashboard() {
     load();
   }
 
+  // ── Auto-end helpers ────────────────────────────────────────────────────────
+
+  /** Writes ended_at for a session that should close automatically. */
+  async function autoEndSession(sessionId: string, reason: string) {
+    const { error } = await supabase
+      .from("sessions")
+      .update({ ended_at: new Date().toISOString() })
+      .eq("id", sessionId)
+      .is("ended_at", null); // guard: only update if not already ended
+    if (!error) {
+      toast.info(`Session auto-ended: ${reason}`);
+      load();
+    }
+  }
+
+  /**
+   * 24-hour auto-end: checked on load and every 5 minutes while the dashboard
+   * is open. Ends any live session whose started_at is >24 h ago.
+   */
+  useEffect(() => {
+    function check() {
+      const now = Date.now();
+      sessions.forEach((s) => {
+        if (s.started_at && !s.ended_at) {
+          const age = now - new Date(s.started_at).getTime();
+          if (age >= 24 * 60 * 60 * 1000) {
+            autoEndSession(s.id, "24-hour time limit reached");
+          }
+        }
+      });
+    }
+    check(); // run immediately when sessions list changes
+    const id = setInterval(check, 5 * 60 * 1000); // re-check every 5 min
+    return () => clearInterval(id);
+  // eslint-disable-next-line
+  }, [sessions]);
+
+  /**
+   * All-groups-finished auto-end: runs whenever the groups list changes
+   * (driven by the existing realtime subscription). Ends a live session when
+   * every registered group has a finish_time.
+   */
+  useEffect(() => {
+    sessions.forEach((s) => {
+      if (!s.started_at || s.ended_at) return;
+      const sGroups = groups.filter((g) => g.session_id === s.id);
+      if (sGroups.length === 0) return; // no groups yet — wait
+      const allDone = sGroups.every((g) => !!g.finish_time);
+      if (allDone) {
+        autoEndSession(s.id, "all groups finished");
+      }
+    });
+  // eslint-disable-next-line
+  }, [groups]);
+
+  // ── End auto-end helpers ─────────────────────────────────────────────────────
+
+  async function reuseSession(source: any) {
+    if (!user) return;
+    setReusing(true);
+    try {
+      // 1. Fetch challenges from the source session
+      const { data: sourceChallenges, error: fetchError } = await supabase
+        .from("challenges")
+        .select("*")
+        .eq("session_id", source.id)
+        .order("level");
+      if (fetchError) throw fetchError;
+
+      // 2. Create a fresh session with a new join code
+      const newCode = genJoinCode();
+      const { data: newSession, error: sessionError } = await supabase
+        .from("sessions")
+        .insert({ teacher_id: user.id, join_code: newCode })
+        .select()
+        .single();
+      if (sessionError) throw sessionError;
+
+      // 3. Copy all challenges into the new session (strip old ids)
+      if (sourceChallenges && sourceChallenges.length > 0) {
+        const rows = sourceChallenges.map(({ id: _id, session_id: _sid, created_at: _ca, ...rest }: any) => ({
+          ...rest,
+          session_id: newSession.id,
+        }));
+        const { error: challengeError } = await supabase.from("challenges").insert(rows);
+        if (challengeError) throw challengeError;
+      }
+
+      toast.success(`New session created: ${newCode}`);
+      setReuseTarget(null);
+      load();
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to reuse session.");
+    } finally {
+      setReusing(false);
+    }
+  }
+
   function toggleGroupExpand(groupId: string) {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -359,6 +460,24 @@ export default function TeacherDashboard() {
           >
             <Plus className="w-5 h-5" /> New Session
           </button>
+          {(() => {
+            const endedCount = sessions.filter((s) => s.ended_at).length;
+            return (
+              <button
+                onClick={() => setShowHistory(true)}
+                className="relative flex items-center gap-1.5 px-3 rounded-full border-2 border-border text-muted-foreground hover:bg-muted/50 transition"
+                title="Session history"
+              >
+                <History className="w-4 h-4" />
+                <span className="text-xs font-semibold">History</span>
+                {endedCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-action text-white text-[10px] font-bold flex items-center justify-center px-1">
+                    {endedCount}
+                  </span>
+                )}
+              </button>
+            );
+          })()}
           <button
             onClick={logout}
             className="px-4 rounded-full border-2 border-border text-muted-foreground"
@@ -372,8 +491,19 @@ export default function TeacherDashboard() {
             No sessions yet. Create one to begin.
           </div>
         )}
+        {sessions.length > 0 && sessions.every((s) => s.ended_at) && (
+          <div className="app-card text-center space-y-2">
+            <p className="text-muted-foreground text-sm">All sessions have ended.</p>
+            <button
+              onClick={() => setShowHistory(true)}
+              className="text-action text-sm font-semibold underline"
+            >
+              View History →
+            </button>
+          </div>
+        )}
 
-        {sessions.map((s) => {
+        {sessions.filter((s) => !s.ended_at).map((s) => {
           const sGroups = groups.filter((g) => g.session_id === s.id);
           const completed = sGroups.filter((g) => g.finish_time).length;
           const joinUrl = `${window.location.origin}/join/${s.id}`;
@@ -458,7 +588,7 @@ export default function TeacherDashboard() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-semibold text-primary flex items-center gap-2">
                     Live Leaderboard
-                    {s.started_at && (
+                    {s.started_at && !s.ended_at && (
                       <span className="flex items-center gap-1 text-[10px] font-semibold text-success uppercase tracking-wide">
                         <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
                         Live
@@ -499,9 +629,18 @@ export default function TeacherDashboard() {
                     </button>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center gap-2 rounded-xl bg-muted border border-border py-2.5 text-sm font-semibold text-muted-foreground">
-                    <span className="w-2 h-2 rounded-full bg-muted-foreground" />
-                    Session Ended
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-muted border border-border py-2.5 text-sm font-semibold text-muted-foreground">
+                      <span className="w-2 h-2 rounded-full bg-muted-foreground" />
+                      Session Ended
+                    </div>
+                    <button
+                      onClick={() => setReuseTarget(s)}
+                      className="flex items-center gap-1.5 rounded-xl border-2 border-action/40 px-3 py-2.5 text-xs font-semibold text-action hover:bg-action/10 transition"
+                      title="Reuse this session's content"
+                    >
+                      <PlayCircle className="w-4 h-4" /> Reuse
+                    </button>
                   </div>
                 )}
 
@@ -556,6 +695,127 @@ export default function TeacherDashboard() {
         })}
       </div>
 
+      {/* ── History Drawer ── */}
+      {showHistory && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/50 animate-fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowHistory(false); }}
+        >
+          <style>{`@keyframes slideInRight{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}`}</style>
+          <div className="relative w-full max-w-md bg-background h-full flex flex-col shadow-2xl" style={{animation:"slideInRight 0.22s ease-out both"}}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+              <div className="flex items-center gap-2 text-primary">
+                <History className="w-5 h-5" />
+                <h2 className="text-lg font-bold">Session History</h2>
+                <span className="text-xs font-semibold text-muted-foreground bg-muted rounded-full px-2 py-0.5">
+                  {sessions.filter((s) => s.ended_at).length}
+                </span>
+              </div>
+              <button onClick={() => setShowHistory(false)} className="text-muted-foreground hover:text-foreground transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable session list */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+              {sessions.filter((s) => s.ended_at).length === 0 && (
+                <p className="text-center text-sm text-muted-foreground py-8">No ended sessions yet.</p>
+              )}
+              {sessions.filter((s) => s.ended_at).map((s) => {
+                const sGroups = groups.filter((g) => g.session_id === s.id);
+                const finishedGroups = sGroups
+                  .filter((g) => g.finish_time && g.start_time)
+                  .map((g) => ({
+                    ...g,
+                    elapsed_ms: new Date(g.finish_time).getTime() - new Date(g.start_time).getTime(),
+                  }))
+                  .sort((a, b) => a.elapsed_ms - b.elapsed_ms);
+                const inProgressGroups = sGroups
+                  .filter((g) => !g.finish_time)
+                  .sort((a, b) => b.current_level - a.current_level);
+                const sorted = [...finishedGroups, ...inProgressGroups];
+                const endedDate = new Date(s.ended_at);
+                const dateLabel = endedDate.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+                const timeLabel = endedDate.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+                return (
+                  <div key={s.id} className="app-card space-y-3">
+                    {/* Session header */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Join code</div>
+                        <div className="text-xl font-bold tracking-wider text-primary">{s.join_code}</div>
+                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5">
+                          <Clock className="w-3 h-3" />
+                          Ended {dateLabel} at {timeLabel}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => { setReuseTarget(s); setShowHistory(false); }}
+                          className="flex items-center gap-1 rounded-xl border-2 border-action/40 px-2.5 py-1.5 text-xs font-semibold text-action hover:bg-action/10 transition"
+                          title="Reuse content"
+                        >
+                          <PlayCircle className="w-3.5 h-3.5" /> Reuse
+                        </button>
+                        <button
+                          onClick={() => { openDeleteDialog(s); setShowHistory(false); }}
+                          className="flex items-center gap-1 rounded-xl border-2 border-destructive/40 px-2.5 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/10 transition"
+                          title="Delete session"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Final leaderboard */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground font-semibold uppercase tracking-wide px-0.5">
+                        <span className="flex items-center gap-1"><Trophy className="w-3 h-3" /> Final Results</span>
+                        <span>{sGroups.length} group{sGroups.length !== 1 ? "s" : ""} · {finishedGroups.length} finished</span>
+                      </div>
+                      {sorted.length === 0 && (
+                        <p className="text-xs text-muted-foreground text-center py-2">No groups participated.</p>
+                      )}
+                      {sorted.map((g, idx) => {
+                        const isFinished = !!g.finish_time;
+                        const rank = isFinished ? idx + 1 : null;
+                        const medals = ["🥇","🥈","🥉"];
+                        const m = isFinished ? Math.floor(g.elapsed_ms / 60000) : 0;
+                        const sec = isFinished ? Math.floor((g.elapsed_ms % 60000) / 1000) : 0;
+                        return (
+                          <div
+                            key={g.id}
+                            className={`flex items-center gap-2.5 rounded-xl px-3 py-2 border text-sm ${
+                              rank === 1 ? "border-yellow-400 bg-yellow-50/50 dark:bg-yellow-900/10" :
+                              rank === 2 ? "border-slate-400 bg-slate-50/50 dark:bg-slate-800/20" :
+                              rank === 3 ? "border-amber-500 bg-amber-50/50 dark:bg-amber-900/10" :
+                              isFinished ? "border-success/40 bg-success/5" :
+                              "border-border bg-background/40"
+                            }`}
+                          >
+                            <span className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold bg-muted/60">
+                              {rank !== null && rank <= 3 ? medals[rank - 1] : rank ?? "—"}
+                            </span>
+                            <span className="flex-1 font-medium truncate">{g.group_name}</span>
+                            {isFinished ? (
+                              <span className="tabular-nums text-xs text-muted-foreground shrink-0">✓ {m}m {sec}s</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground shrink-0">L{g.current_level}/5</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* End Session Confirmation Modal */}
       {endTarget && (
         <div
@@ -590,6 +850,47 @@ export default function TeacherDashboard() {
                 className="flex-1 rounded-xl bg-destructive py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-40"
               >
                 {ending ? "Ending…" : "End Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reuse Session Modal */}
+      {reuseTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setReuseTarget(null); }}
+        >
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-pop-in">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 text-action">
+                <PlayCircle className="w-5 h-5 flex-shrink-0" />
+                <h2 className="text-lg font-bold">Reuse Session Content</h2>
+              </div>
+              <button onClick={() => setReuseTarget(null)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              This will create a <span className="font-semibold text-primary">new session</span> with a fresh join code,
+              copying all compartments and challenges from session{" "}
+              <span className="font-bold text-primary">{reuseTarget.join_code}</span>.
+              The original session will remain unchanged.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setReuseTarget(null)}
+                className="flex-1 rounded-xl border-2 border-border py-2 text-sm font-semibold text-muted-foreground hover:bg-muted/50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => reuseSession(reuseTarget)}
+                disabled={reusing}
+                className="flex-1 rounded-xl bg-action py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-40"
+              >
+                {reusing ? "Creating…" : "Create New Session"}
               </button>
             </div>
           </div>
