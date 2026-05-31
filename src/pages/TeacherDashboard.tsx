@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,6 +7,206 @@ import { AppHeader } from "@/components/AppHeader";
 import { DEFAULT_CHALLENGES, DEFAULT_STORY, genJoinCode } from "@/lib/gameDefaults";
 import { Plus, LogOut, ExternalLink, Trophy, QrCode, X, Trash2, PlayCircle, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { toast } from "sonner";
+
+// ── FLIP-animated leaderboard row ───────────────────────────────────────────
+// Tracks its own DOM position and plays a smooth slide when the list reorders.
+
+const RANK_META: Record<number, { medal: string; border: string; bg: string; text: string; badge: string; glow: string }> = {
+  1: {
+    medal: "🥇",
+    border: "border-yellow-400",
+    bg: "bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/10",
+    text: "text-yellow-700 dark:text-yellow-400",
+    badge: "bg-yellow-400/25 text-yellow-700 dark:text-yellow-400",
+    glow: "shadow-[0_0_12px_2px_rgba(250,204,21,0.35)]",
+  },
+  2: {
+    medal: "🥈",
+    border: "border-slate-400",
+    bg: "bg-gradient-to-r from-slate-50 to-gray-50 dark:from-slate-800/40 dark:to-gray-800/20",
+    text: "text-slate-600 dark:text-slate-300",
+    badge: "bg-slate-400/20 text-slate-600 dark:text-slate-300",
+    glow: "shadow-[0_0_10px_2px_rgba(148,163,184,0.30)]",
+  },
+  3: {
+    medal: "🥉",
+    border: "border-amber-600",
+    bg: "bg-gradient-to-r from-orange-50 to-amber-50 dark:from-amber-900/20 dark:to-orange-900/10",
+    text: "text-amber-700 dark:text-amber-500",
+    badge: "bg-amber-500/20 text-amber-700 dark:text-amber-500",
+    glow: "shadow-[0_0_10px_2px_rgba(217,119,6,0.30)]",
+  },
+};
+
+interface AnimatedRowProps {
+  groupId: string;
+  rank: number | null;
+  isFinished: boolean;
+  groupName: string;
+  elapsed: number;
+  currentLevel: number;
+  pct: number;
+  membersExpanded: boolean;
+  memberList: string[];
+  onToggleExpand: () => void;
+}
+
+function AnimatedRow({
+  groupId, rank, isFinished, groupName, elapsed,
+  currentLevel, pct, membersExpanded, memberList, onToggleExpand,
+}: AnimatedRowProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const prevTop = useRef<number | null>(null);
+  const prevRank = useRef<number | null>(null);
+  const [justTookLead, setJustTookLead] = useState(false);
+
+  // Capture position BEFORE React commits the new layout (first-read of FLIP)
+  useLayoutEffect(() => {
+    if (ref.current) {
+      prevTop.current = ref.current.getBoundingClientRect().top;
+    }
+  });
+
+  // After commit: if position changed, animate from old → new (FLIP invert+play)
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || prevTop.current === null) return;
+    const newTop = el.getBoundingClientRect().top;
+    const delta = prevTop.current - newTop;
+    if (Math.abs(delta) < 2) return; // no meaningful movement
+
+    // Detect rank takeover (moved up)
+    if (delta > 0) {
+      setJustTookLead(true);
+      setTimeout(() => setJustTookLead(false), 1200);
+    }
+
+    el.style.transform = `translateY(${delta}px)`;
+    el.style.transition = "none";
+    requestAnimationFrame(() => {
+      el.style.transform = "";
+      el.style.transition = "transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)";
+    });
+  });
+
+  // Detect when a group newly becomes rank 1
+  useEffect(() => {
+    if (rank === 1 && prevRank.current !== null && prevRank.current !== 1) {
+      setJustTookLead(true);
+      setTimeout(() => setJustTookLead(false), 1500);
+    }
+    prevRank.current = rank;
+  }, [rank]);
+
+  const meta = rank !== null && rank <= 3 ? RANK_META[rank] : null;
+  const m = Math.floor(elapsed / 60);
+  const sec = elapsed % 60;
+
+  return (
+    <div ref={ref} style={{ willChange: "transform" }}>
+      <div
+        className={`rounded-xl border-2 overflow-hidden transition-all duration-500 ${
+          justTookLead ? "scale-[1.015]" : "scale-100"
+        } ${
+          meta
+            ? `${meta.border} ${meta.bg} ${meta.glow}`
+            : isFinished
+            ? "border-success bg-success/5"
+            : "border-border bg-background/40"
+        }`}
+      >
+        {/* Gold/Silver/Bronze header stripe */}
+        {meta && (
+          <div className={`h-1 w-full ${
+            rank === 1 ? "bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-300" :
+            rank === 2 ? "bg-gradient-to-r from-slate-300 via-slate-400 to-gray-300" :
+            "bg-gradient-to-r from-amber-500 via-orange-400 to-amber-600"
+          }`} />
+        )}
+
+        <div className="p-3 space-y-2">
+          <div className="flex items-center justify-between text-sm gap-2">
+            <span className="font-semibold flex items-center gap-1.5 truncate">
+
+              {/* Rank badge */}
+              {rank !== null ? (
+                <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-base font-bold transition-all duration-500 ${
+                  meta ? meta.badge : "bg-muted text-muted-foreground text-xs"
+                } ${justTookLead ? "animate-bounce" : ""}`}>
+                  {meta ? meta.medal : rank}
+                </span>
+              ) : (
+                <span className="shrink-0 w-7 h-7 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground">
+                  —
+                </span>
+              )}
+
+              {/* Group name */}
+              <span className={`truncate ${meta ? meta.text + " font-bold" : ""}`}>
+                {groupName}
+              </span>
+
+              {/* Finished pill */}
+              {isFinished && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold text-success uppercase tracking-wide">
+                  <Trophy className="w-3 h-3" /> Done
+                </span>
+              )}
+
+              {/* "Just took the lead!" flash */}
+              {justTookLead && rank === 1 && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-yellow-400/20 px-2 py-0.5 text-[10px] font-bold text-yellow-600 uppercase tracking-wide animate-pulse">
+                  👑 Lead!
+                </span>
+              )}
+            </span>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-xs tabular-nums ${meta ? meta.text : "text-muted-foreground"}`}>
+                {isFinished ? `✓ ${m}m ${sec}s` : `L${currentLevel}/5 · ${m}m ${sec}s`}
+              </span>
+              {memberList.length > 0 && (
+                <button
+                  onClick={onToggleExpand}
+                  className="flex items-center gap-1 text-[10px] font-semibold text-action"
+                >
+                  <Users className="w-3 h-3" />
+                  {memberList.length}
+                  {membersExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="h-2 bg-muted/60 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-700 ${
+                isFinished
+                  ? "bg-success"
+                  : rank === 1 ? "bg-gradient-to-r from-yellow-400 to-amber-400"
+                  : rank === 2 ? "bg-gradient-to-r from-slate-400 to-slate-500"
+                  : rank === 3 ? "bg-gradient-to-r from-amber-500 to-orange-500"
+                  : "bg-action"
+              }`}
+              style={{ width: `${Math.min(100, pct)}%` }}
+            />
+          </div>
+        </div>
+
+        {membersExpanded && memberList.length > 0 && (
+          <div className="border-t border-border bg-muted/30 px-3 py-2 flex flex-wrap gap-1.5">
+            {memberList.map((name, i) => (
+              <span key={i} className="text-[11px] bg-background border border-border rounded-full px-2.5 py-0.5 text-foreground/80 font-medium">
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function TeacherDashboard() {
   const { user, loading } = useAuth();
@@ -293,85 +493,28 @@ export default function TeacherDashboard() {
                   return sorted.map((g, idx) => {
                     const isFinished = !!g.finish_time;
                     const rank = isFinished ? idx + 1 : null;
-                    const RANK_MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
                     const elapsed = g.start_time
                       ? Math.round(
-                          ((g.finish_time ? +new Date(g.finish_time) : Date.now()) -
-                            +new Date(g.start_time)) /
-                            1000
+                          ((g.finish_time ? +new Date(g.finish_time) : Date.now()) - +new Date(g.start_time)) / 1000
                         )
                       : 0;
                     const pct = isFinished ? 100 : ((g.current_level - 1) / 5) * 100;
                     const membersExpanded = expandedGroups.has(g.id);
                     const memberList: string[] = g.members || [];
                     return (
-                      <div
+                      <AnimatedRow
                         key={g.id}
-                        className={`rounded-xl border overflow-hidden ${
-                          isFinished
-                            ? "border-success bg-success/5"
-                            : "border-border bg-background/40"
-                        }`}
-                      >
-                        <div className="p-3 space-y-2">
-                          <div className="flex items-center justify-between text-sm gap-2">
-                            <span className="font-semibold flex items-center gap-1.5 truncate">
-                              {/* Rank badge */}
-                              {rank !== null && (
-                                <span className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                                  rank === 1 ? "bg-yellow-400/20 text-yellow-600" :
-                                  rank === 2 ? "bg-slate-400/20 text-slate-500" :
-                                  rank === 3 ? "bg-amber-400/20 text-amber-600" :
-                                  "bg-muted text-muted-foreground"
-                                }`}>
-                                  {rank <= 3 ? RANK_MEDALS[rank] : rank}
-                                </span>
-                              )}
-                              <span className="truncate">{g.group_name}</span>
-                              {isFinished && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold text-success uppercase tracking-wide">
-                                  <Trophy className="w-3 h-3" /> Done
-                                </span>
-                              )}
-                            </span>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-xs text-muted-foreground">
-                                {isFinished ? `✓ ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `L${g.current_level}/5 · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s`}
-                              </span>
-                              {memberList.length > 0 && (
-                                <button
-                                  onClick={() => toggleGroupExpand(g.id)}
-                                  className="flex items-center gap-1 text-[10px] font-semibold text-action"
-                                >
-                                  <Users className="w-3 h-3" />
-                                  {memberList.length}
-                                  {membersExpanded
-                                    ? <ChevronUp className="w-3 h-3" />
-                                    : <ChevronDown className="w-3 h-3" />}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          <div className="h-2 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className={`h-full transition-all ${isFinished ? "bg-success" : "bg-action"}`}
-                              style={{ width: `${Math.min(100, pct)}%` }}
-                            />
-                          </div>
-                        </div>
-                        {membersExpanded && memberList.length > 0 && (
-                          <div className="border-t border-border bg-muted/30 px-3 py-2 flex flex-wrap gap-1.5">
-                            {memberList.map((name, i) => (
-                              <span
-                                key={i}
-                                className="text-[11px] bg-background border border-border rounded-full px-2.5 py-0.5 text-foreground/80 font-medium"
-                              >
-                                {name}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                        groupId={g.id}
+                        rank={rank}
+                        isFinished={isFinished}
+                        groupName={g.group_name}
+                        elapsed={elapsed}
+                        currentLevel={g.current_level}
+                        pct={pct}
+                        membersExpanded={membersExpanded}
+                        memberList={memberList}
+                        onToggleExpand={() => toggleGroupExpand(g.id)}
+                      />
                     );
                   });
                 })()}
