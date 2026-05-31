@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,16 +16,8 @@ function injectPrintStyles() {
   style.id = PRINT_STYLE_ID;
   style.textContent = `
     @media print {
-      body, html { height: auto !important; overflow: hidden !important; }
-      body * { visibility: hidden; }
-      #qr-print-area, #qr-print-area * { visibility: visible; }
-      #qr-print-area {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        display: flex !important;
-      }
+      body > *:not(#qr-print-area) { display: none !important; }
+      #qr-print-area { display: flex !important; }
     }
     #qr-print-area {
       display: none;
@@ -327,36 +320,39 @@ export default function TeacherSession() {
         </div>
       </div>
 
-      {/* ── Hidden QR Print Area — only visible when printing ── */}
-      <div id="qr-print-area">
-        {/* Session Join QR */}
-        <div className="print-qr-item">
-          <div className="print-label">Session Code</div>
-          <div className="print-sublabel">{session.join_code}</div>
-          <QRCodeCanvas
-            id="print-join-qr"
-            value={joinUrl}
-            size={160}
-            includeMargin
-          />
-          <div className="print-sublabel">Scan to join the session</div>
-        </div>
-
-        {/* Compartment Unlock QRs */}
-        {[1, 2, 3, 4].map((n) => (
-          <div key={n} className="print-qr-item">
-            <div className="print-label">After Compartment {n}</div>
-            <div className="print-sublabel">Place inside compartment {n}</div>
+      {/* ── Hidden QR Print Area — rendered via portal directly to body ── */}
+      {createPortal(
+        <div id="qr-print-area">
+          {/* Session Join QR */}
+          <div className="print-qr-item">
+            <div className="print-label">Session Code</div>
+            <div className="print-sublabel">{session.join_code}</div>
             <QRCodeCanvas
-              id={`print-unlock-qr-${n}`}
-              value={`${window.location.origin}/play/SCAN/scan?from=${n}`}
+              id="print-join-qr"
+              value={joinUrl}
               size={160}
               includeMargin
             />
-            <div className="print-sublabel">Scan to unlock next level</div>
+            <div className="print-sublabel">Scan to join the session</div>
           </div>
-        ))}
-      </div>
+
+          {/* Compartment Unlock QRs */}
+          {[1, 2, 3, 4].map((n) => (
+            <div key={n} className="print-qr-item">
+              <div className="print-label">After Compartment {n}</div>
+              <div className="print-sublabel">Place inside compartment {n}</div>
+              <QRCodeCanvas
+                id={`print-unlock-qr-${n}`}
+                value={`${window.location.origin}/play/SCAN/scan?from=${n}`}
+                size={160}
+                includeMargin
+              />
+              <div className="print-sublabel">Scan to unlock next level</div>
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
