@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { QRCodeCanvas } from "qrcode.react";
 import { supabase } from "@/integrations/supabase/client";
 import { AppHeader } from "@/components/AppHeader";
 import { Trophy, Clock, Medal } from "lucide-react";
@@ -41,7 +40,40 @@ export default function Complete() {
   const [myElapsed, setMyElapsed] = useState<number | null>(null);
   const [leaderboard, setLeaderboard] = useState<RankedGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const url = `${window.location.origin}/teacher/dashboard`;
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [myStartTime, setMyStartTime] = useState<string | null>(null);
+  const [myFinishTime, setMyFinishTime] = useState<string | null>(null);
+
+  async function loadLeaderboard(sid: string, gid: string, startTime: string, finishTime: string) {
+    const { data: allGroups } = await supabase
+      .from("groups")
+      .select("id, group_name, start_time, finish_time")
+      .eq("session_id", sid)
+      .not("finish_time", "is", null)
+      .not("start_time", "is", null);
+
+    if (allGroups && allGroups.length > 0) {
+      const ranked: RankedGroup[] = allGroups
+        .map((g) => ({
+          id: g.id,
+          group_name: g.group_name,
+          elapsed_ms: new Date(g.finish_time).getTime() - new Date(g.start_time).getTime(),
+        }))
+        .filter((g) => g.elapsed_ms > 0)
+        .sort((a, b) => a.elapsed_ms - b.elapsed_ms)
+        .map((g, i) => ({ ...g, rank: i + 1 }));
+
+      setLeaderboard(ranked);
+
+      const mine = ranked.find((g) => g.id === gid);
+      if (mine) {
+        setMyRank(mine.rank);
+        setMyElapsed(mine.elapsed_ms);
+      } else if (startTime && finishTime) {
+        setMyElapsed(new Date(finishTime).getTime() - new Date(startTime).getTime());
+      }
+    }
+  }
 
   useEffect(() => {
     if (!groupId) return;
@@ -56,6 +88,7 @@ export default function Complete() {
       if (!group) { setLoading(false); return; }
 
       setGroupName(group.group_name);
+      setSessionId(group.session_id);
 
       // 2. Record finish_time if not yet set
       let finishTime = group.finish_time;
@@ -64,41 +97,28 @@ export default function Complete() {
         await supabase.from("groups").update({ finish_time: finishTime }).eq("id", groupId);
       }
 
-      // 3. Load all finished groups in same session
-      const { data: allGroups } = await supabase
-        .from("groups")
-        .select("id, group_name, start_time, finish_time")
-        .eq("session_id", group.session_id)
-        .not("finish_time", "is", null)
-        .not("start_time", "is", null);
+      setMyStartTime(group.start_time);
+      setMyFinishTime(finishTime);
 
-      if (allGroups && allGroups.length > 0) {
-        // Compute elapsed and sort by it
-        const ranked: RankedGroup[] = allGroups
-          .map((g) => ({
-            id: g.id,
-            group_name: g.group_name,
-            elapsed_ms: new Date(g.finish_time).getTime() - new Date(g.start_time).getTime(),
-          }))
-          .filter((g) => g.elapsed_ms > 0)
-          .sort((a, b) => a.elapsed_ms - b.elapsed_ms)
-          .map((g, i) => ({ ...g, rank: i + 1 }));
-
-        setLeaderboard(ranked);
-
-        const mine = ranked.find((g) => g.id === groupId);
-        if (mine) {
-          setMyRank(mine.rank);
-          setMyElapsed(mine.elapsed_ms);
-        } else if (group.start_time && finishTime) {
-          // Fallback: just show time, rank not yet computed
-          setMyElapsed(new Date(finishTime).getTime() - new Date(group.start_time).getTime());
-        }
-      }
-
+      // 3. Initial leaderboard load
+      await loadLeaderboard(group.session_id, groupId, group.start_time, finishTime);
       setLoading(false);
     })();
   }, [groupId]);
+
+  // Live subscription — refresh leaderboard whenever any group in this session updates
+  useEffect(() => {
+    if (!sessionId || !groupId || !myStartTime || !myFinishTime) return;
+    const ch = supabase
+      .channel(`complete-leaderboard-${sessionId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "groups", filter: `session_id=eq.${sessionId}` },
+        () => loadLeaderboard(sessionId, groupId, myStartTime, myFinishTime)
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [sessionId, groupId, myStartTime, myFinishTime]);
 
   return (
     <div className="app-shell pb-12">
@@ -150,12 +170,6 @@ export default function Complete() {
           <p className="text-xs text-muted-foreground">
             Teacher: read the group name above to confirm against your registration list.
           </p>
-          <div className="flex justify-center pt-2">
-            <div className="bg-card p-3 rounded-xl shadow-[var(--shadow-card)]">
-              <QRCodeCanvas value={url} size={160} />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">Show this QR to your teacher to mark completion.</p>
         </div>
 
         {/* ── Leaderboard ── */}
@@ -164,6 +178,10 @@ export default function Complete() {
             <div className="flex items-center gap-2">
               <Trophy className="w-4 h-4 text-primary" />
               <span className="font-bold text-primary">Leaderboard</span>
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-success uppercase tracking-wide">
+                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                Live
+              </span>
               <span className="text-xs text-muted-foreground ml-auto">{leaderboard.length} group{leaderboard.length !== 1 ? "s" : ""} finished</span>
             </div>
             <div className="space-y-2">

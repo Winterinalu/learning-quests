@@ -238,7 +238,15 @@ export default function TeacherDashboard() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-semibold text-primary">Live Leaderboard</span>
+                  <span className="font-semibold text-primary flex items-center gap-2">
+                    Live Leaderboard
+                    {s.started_at && (
+                      <span className="flex items-center gap-1 text-[10px] font-semibold text-success uppercase tracking-wide">
+                        <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                        Live
+                      </span>
+                    )}
+                  </span>
                   <span className="text-xs text-muted-foreground">
                     {sGroups.length} groups · {completed} done
                   </span>
@@ -268,14 +276,24 @@ export default function TeacherDashboard() {
                 {sGroups.length === 0 && (
                   <p className="text-xs text-muted-foreground">Waiting for groups to register...</p>
                 )}
-                {sGroups
-                  .sort(
-                    (a, b) =>
-                      b.current_level - a.current_level ||
-                      (a.created_at < b.created_at ? -1 : 1)
-                  )
-                  .map((g) => {
-                    const pct = ((g.current_level - 1) / 5) * 100 + (g.finish_time ? 20 : 0);
+                {(() => {
+                  // Rank finished groups by elapsed time, then append in-progress groups
+                  const finishedGroups = sGroups
+                    .filter((g) => g.finish_time && g.start_time)
+                    .map((g) => ({
+                      ...g,
+                      elapsed_ms: new Date(g.finish_time).getTime() - new Date(g.start_time).getTime(),
+                    }))
+                    .sort((a, b) => a.elapsed_ms - b.elapsed_ms);
+                  const inProgressGroups = sGroups
+                    .filter((g) => !g.finish_time)
+                    .sort((a, b) => b.current_level - a.current_level || (a.created_at < b.created_at ? -1 : 1));
+                  const sorted = [...finishedGroups, ...inProgressGroups];
+
+                  return sorted.map((g, idx) => {
+                    const isFinished = !!g.finish_time;
+                    const rank = isFinished ? idx + 1 : null;
+                    const RANK_MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
                     const elapsed = g.start_time
                       ? Math.round(
                           ((g.finish_time ? +new Date(g.finish_time) : Date.now()) -
@@ -283,28 +301,42 @@ export default function TeacherDashboard() {
                             1000
                         )
                       : 0;
+                    const pct = isFinished ? 100 : ((g.current_level - 1) / 5) * 100;
                     const membersExpanded = expandedGroups.has(g.id);
                     const memberList: string[] = g.members || [];
                     return (
                       <div
                         key={g.id}
                         className={`rounded-xl border overflow-hidden ${
-                          g.finish_time
+                          isFinished
                             ? "border-success bg-success/5"
                             : "border-border bg-background/40"
                         }`}
                       >
                         <div className="p-3 space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="font-semibold flex items-center gap-1.5">
-                              {g.group_name}
-                              {g.finish_time && (
-                                <Trophy className="w-4 h-4 text-success" />
+                          <div className="flex items-center justify-between text-sm gap-2">
+                            <span className="font-semibold flex items-center gap-1.5 truncate">
+                              {/* Rank badge */}
+                              {rank !== null && (
+                                <span className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                  rank === 1 ? "bg-yellow-400/20 text-yellow-600" :
+                                  rank === 2 ? "bg-slate-400/20 text-slate-500" :
+                                  rank === 3 ? "bg-amber-400/20 text-amber-600" :
+                                  "bg-muted text-muted-foreground"
+                                }`}>
+                                  {rank <= 3 ? RANK_MEDALS[rank] : rank}
+                                </span>
+                              )}
+                              <span className="truncate">{g.group_name}</span>
+                              {isFinished && (
+                                <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-bold text-success uppercase tracking-wide">
+                                  <Trophy className="w-3 h-3" /> Done
+                                </span>
                               )}
                             </span>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 shrink-0">
                               <span className="text-xs text-muted-foreground">
-                                L{g.current_level}/5 · {Math.floor(elapsed / 60)}m {elapsed % 60}s
+                                {isFinished ? `✓ ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `L${g.current_level}/5 · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s`}
                               </span>
                               {memberList.length > 0 && (
                                 <button
@@ -322,7 +354,7 @@ export default function TeacherDashboard() {
                           </div>
                           <div className="h-2 bg-muted rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-action transition-all"
+                              className={`h-full transition-all ${isFinished ? "bg-success" : "bg-action"}`}
                               style={{ width: `${Math.min(100, pct)}%` }}
                             />
                           </div>
@@ -341,7 +373,8 @@ export default function TeacherDashboard() {
                         )}
                       </div>
                     );
-                  })}
+                  });
+                })()}
               </div>
             </div>
           );
