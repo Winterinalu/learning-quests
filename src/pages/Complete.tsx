@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { AppHeader } from "@/components/AppHeader";
-import { Trophy, Clock, Medal } from "lucide-react";
+import { Trophy, Clock, Medal, Home } from "lucide-react";
 
 interface RankedGroup {
   id: string;
@@ -35,6 +35,7 @@ const MEDAL_COLORS: Record<number, string> = {
 
 export default function Complete() {
   const { groupId } = useParams();
+  const nav = useNavigate();
   const [groupName, setGroupName] = useState<string>("");
   const [myRank, setMyRank] = useState<number | null>(null);
   const [myElapsed, setMyElapsed] = useState<number | null>(null);
@@ -170,6 +171,12 @@ export default function Complete() {
           <p className="text-xs text-muted-foreground">
             Teacher: read the group name above to confirm against your registration list.
           </p>
+          <button
+            onClick={() => nav("/")}
+            className="flex items-center justify-center gap-2 w-full rounded-2xl border-2 border-border py-3 text-sm font-semibold text-muted-foreground hover:bg-muted/50 transition"
+          >
+            <Home className="w-4 h-4" /> Back to Home
+          </button>
         </div>
 
         {/* ── Leaderboard ── */}

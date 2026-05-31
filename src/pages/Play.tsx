@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { AppHeader } from "@/components/AppHeader";
 import { InfoBox } from "@/components/InfoBox";
 import { QRScanner } from "@/components/QRScanner";
-import { BookOpen, Key, ScanLine, CheckCircle2, Puzzle } from "lucide-react";
+import { BookOpen, Key, ScanLine, CheckCircle2, Puzzle, Home } from "lucide-react";
 import { toast } from "sonner";
 
 const STRIKES_PER_TIER = 3;       // wrong answers before a cooldown triggers
@@ -182,39 +182,52 @@ export default function Play() {
 
   // Session status gate — shown before the main game UI
   if (sessionStatus !== "active") {
-    const statusContent = {
+    const statusContent: Record<string, { icon: string | null; heading: string; body: string; showHome: boolean }> = {
       loading: {
         icon: null,
         heading: "Loading…",
         body: "Please wait.",
+        showHome: false,
       },
       not_started: {
         icon: "⏳",
         heading: "Session not started yet",
         body: "Your teacher hasn't started the session yet. Hold tight — this page will update automatically once the session goes live.",
+        showHome: false,
       },
       ended: {
         icon: "🏁",
         heading: "Session has ended",
         body: "The teacher has closed this session. No further answers can be submitted. Thank you for participating!",
+        showHome: true,
       },
       deleted: {
         icon: "🗑️",
         heading: "Session no longer exists",
         body: "This session has been deleted by the teacher. Please ask your teacher for a new join link.",
+        showHome: true,
       },
-    }[sessionStatus];
+    };
+    const sc = statusContent[sessionStatus];
 
     return (
       <div className="app-shell">
         <AppHeader />
         <div className="px-4">
           <div className="app-card text-center space-y-3 animate-pop-in">
-            {statusContent.icon && (
-              <div className="text-4xl">{statusContent.icon}</div>
+            {sc.icon && (
+              <div className="text-4xl">{sc.icon}</div>
             )}
-            <h2 className="text-lg font-bold text-primary">{statusContent.heading}</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">{statusContent.body}</p>
+            <h2 className="text-lg font-bold text-primary">{sc.heading}</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">{sc.body}</p>
+            {sc.showHome && (
+              <button
+                onClick={() => nav("/")}
+                className="flex items-center justify-center gap-2 w-full rounded-2xl border-2 border-border py-3 text-sm font-semibold text-muted-foreground hover:bg-muted/50 transition"
+              >
+                <Home className="w-4 h-4" /> Back to Home
+              </button>
+            )}
           </div>
         </div>
       </div>
