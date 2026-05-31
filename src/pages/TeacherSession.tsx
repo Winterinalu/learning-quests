@@ -15,6 +15,7 @@ function injectPrintStyles() {
   style.id = PRINT_STYLE_ID;
   style.textContent = `
     @media print {
+      body, html { height: auto !important; overflow: hidden !important; }
       body * { visibility: hidden; }
       #qr-print-area, #qr-print-area * { visibility: visible; }
       #qr-print-area {
