@@ -15,8 +15,15 @@ function injectPrintStyles() {
   style.id = PRINT_STYLE_ID;
   style.textContent = `
     @media print {
-      body > * { display: none !important; }
-      #qr-print-area { display: flex !important; }
+      body * { visibility: hidden; }
+      #qr-print-area, #qr-print-area * { visibility: visible; }
+      #qr-print-area {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        display: flex !important;
+      }
     }
     #qr-print-area {
       display: none;
